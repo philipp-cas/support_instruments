@@ -2,6 +2,7 @@
 
 ## Dieses Projekt implementiert ein Framework zur Simulation von Handels- und Förderstrategien für erneuerbare Energien (Wind/Solar) in verschiedenen Förderregimen (z. B. FIT, Marktprämie, CfD). Datenbasis sind öffentlich verfügbare ENTSO-E Zeitreihen sowie zusätzliche Marktdaten (reBAP, ID1).
 
+```text
 project-root/
 │
 ├─ base/
@@ -28,5 +29,6 @@ project-root/
 ├─ .env                       DB-Credentials (nicht ins Repo pushen!)
 ├─ .gitignore                 ignoriert Cache-/Umgebungsdateien
 └─ requirements.txt           Python-Abhängigkeiten
+```
 
 
