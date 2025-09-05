@@ -1,0 +1,8 @@
+# Secrets & lokale Artefakte
+.env
+base/data/*
+results/*
+__pycache__/
+*.csv
+*.csv.gz
+.ipynb_checkpoints/
