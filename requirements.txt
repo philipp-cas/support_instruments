@@ -1,0 +1,4 @@
+python-dotenv>=1.0
+SQLAlchemy>=2.0
+pandas>=2.0
+numpy>=1.26
