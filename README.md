@@ -1,7 +1,6 @@
 # Support Instruments – Simulation Framework
 
-## Dieses Projekt implementiert ein Framework zur Simulation von Handels- und Förderstrategien für erneuerbare Energien (Wind/Solar) in verschiedenen Förderregimen (z. B. FIT, Marktprämie, CfD).
-## Datenbasis sind öffentlich verfügbare ENTSO-E Zeitreihen sowie zusätzliche Marktdaten (reBAP, ID1).
+## Dieses Projekt implementiert ein Framework zur Simulation von Handels- und Förderstrategien für erneuerbare Energien (Wind/Solar) in verschiedenen Förderregimen (z. B. FIT, Marktprämie, CfD). Datenbasis sind öffentlich verfügbare ENTSO-E Zeitreihen sowie zusätzliche Marktdaten (reBAP, ID1).
 
 project-root/
 │
