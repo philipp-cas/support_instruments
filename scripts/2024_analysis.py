@@ -359,6 +359,8 @@ def main():
         weight="Act_raw_MW",   # << das ist jetzt die Gewichtung
     )
 
+
+
     # ---- Plot: Conformity (Linie je Regime) ----
     plt.figure(figsize=(10, 5))
     for reg, grp in sens_idx.groupby("Regime"):
