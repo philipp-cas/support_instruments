@@ -1,21 +1,42 @@
 # scripts/build_cache.py
+from __future__ import annotations
 from pathlib import Path
+import sys, os
+
+# --- Projektroot robust ermitteln (Ordner, der 'src' und 'data' enthält) ---
+HERE = Path(__file__).resolve()
+ROOT = HERE.parents[1]
+if os.fspath(ROOT) not in sys.path:
+    sys.path.insert(0, os.fspath(ROOT))
+# Optional: CWD auf Projektroot setzen, damit relative Pfade wie "data/..." sicher sind
+os.chdir(ROOT)
+
 from src.data_store import get_data
+from src.config import DATA_DIR
 
-def main():
-    # Rohdaten-Pfade (innerhalb von base/data abgelegt)
-    rebap_path = Path("base/data/reBAP_utc.csv")
-    id1_path   = Path("base/data/id1_price_utc.xlsx")
+def main() -> None:
+    rebap_path = DATA_DIR / "reBAP_utc.csv"
+    id1_path   = DATA_DIR / "id1_price_utc.xlsx"
 
-    # Cache neu erzeugen
-    df = get_data(force_refresh=True,
-                  rebap_csv=rebap_path,
-                  id1_xlsx=id1_path)
+    # Debug-Ausgaben helfen, falls es doch mal klemmt
+    print("CWD:", Path.cwd())
+    print("ReBAP:", rebap_path, "exists:", rebap_path.exists())
+    print("ID1:  ", id1_path,   "exists:", id1_path.exists())
 
-    print("Cache gebaut")
+    if not rebap_path.exists() or not id1_path.exists():
+        raise FileNotFoundError(
+            "Rohdaten fehlen:\n"
+            f"  - {rebap_path}\n"
+            f"  - {id1_path}\n"
+            "Bitte Dateien in den data/ Ordner legen."
+        )
+
+    df = get_data(force_refresh=True, rebap_csv=rebap_path, id1_xlsx=id1_path)
+
+    print("Cache gebaut ✅")
     print("Shape:", df.shape)
     print("Zeitraum:", df.index.min(), "→", df.index.max())
-    print("Gespeichert unter: base/data/data_final.csv")
+    print(f"Gespeichert unter: {DATA_DIR / 'data_final.csv'}")
 
 if __name__ == "__main__":
     main()
