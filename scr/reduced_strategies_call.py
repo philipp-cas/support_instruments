@@ -1,48 +1,53 @@
-# src/reduced_strategies_call.py
 # =============================================================================
-# Modul: reduced_strategies_call – Orchestrierung von Simulationsläufen
+# Modul: reduced_strategies_call – Orchestrierung & I/O für Serienläufe
 # -----------------------------------------------------------------------------
 # Zweck
 # -----
-# Dieses Modul stellt bequeme Wrapper um `reduced_strategies(...)` bereit:
-# - run_one(regime, use_da_id, data=None): genau EIN Lauf pro Regime/Strategie.
-# - run_all(regimes, data=None): alle Regime, jeweils DA_only & DA_ID.
-# - run_all_da_only(regimes, data=None): nur DA_only.
-# - run_all_da_id(regimes, data=None): nur DA+ID (Intraday aktiv).
-# - make_details_by_regime(...): zerlegt MultiIndex-Details in Dict je Regime.
-# - save_results_csv(...) / load_results_csv(...): Ergebnisse als CSV (kein Parquet).
+# Dieses Modul kapselt wiederkehrende Aufrufmuster von `reduced_strategies(...)`:
+#   - `run_one(regime, use_da_id, data=None)`:
+#       genau EIN Lauf für ein Regime, wahlweise DA-only oder DA+ID.
+#   - `run_all(regimes, data=None)`:
+#       führt alle Regime jeweils DA_only *und* DA_ID aus und bündelt Ergebnisse.
+#   - `run_all_da_only(...)` / `run_all_da_id(...)`:
+#       bequeme Varianten für nur eine der beiden Sichten.
+#   - `make_details_by_regime(...)`:
+#       MultiIndex-Details (level 'regime') in Dict[str, DataFrame] splitten.
+#   - `save_results_csv(...)` / `load_results_csv(...)`:
+#       einfache CSV-I/O-Helfer (keine Parquet-Abhängigkeit).
 #
-# Integration in dein Projekt
-# ---------------------------
-# - Datenzugriff: via CSV-Cache aus base/data/data_final.csv (siehe src/data_store.py).
-#   Du kannst `data` explizit reinreichen – oder None lassen (dann wird es intern
-#   mit get_data() geladen).
-# - Zentrale Konstanten kommen aus src/config.py.
+# Zusammenspiel mit dem Core
+# --------------------------
+# - Dieses Modul reicht die **richtigen Spalten & Parameter** an `reduced_strategies(...)` durch,
+#   gemäß `src/config.py` (z. B. FORECAST_DA_COL, ACTUAL_COL, DA_PRICE_COL, REBAP_COL,
+#   FORECAST_ID_COL, ID_PRICE_COL, MV_REAL_COL sowie Default-Parameter wie P_FIT, CFD_K, MPM_AW).
+# - ID wird nur gesetzt, wenn `use_da_id=True` (genau wie im Core gefordert: beide Spalten setzen).
+# - Für MPM wird `market_value_col=MV_REAL_COL` genutzt; falls kein Estimator übergeben wird,
+#   gilt: Vormonat des realen Marktwertes (Core-Standard).
 #
-# Minimalbeispiele
-# ----------------
-# from src.reduced_strategies_call import run_one, run_all_da_only, run_all_da_id
-# from src.config import START_DATE, END_DATE
+# Datenzugriff
+# ------------
+# - Wird `data=None` übergeben, lädt das Modul intern den CSV-Cache via `get_data()`.
+# - Ansonsten kannst du einen bereits gefilterten/angepassten DataFrame reichen.
 #
-# # Einzel-Lauf: CFD, nur Day-Ahead (kein ID)
-# details_cfd_da_only, totals_cfd_da_only = run_one("CFD", use_da_id=False)
+# Outputs
+# -------
+# - `run_one(...)` → (details, totals) für ein Regime
+# - `run_all*` → gebündelte Details (MultiIndex: "regime", "DateTime") und Totals (Index: "regime")
+# - CSV-Helfer speichern/lesen Details & Totals reproduzierbar weg bzw. wieder ein
 #
-# # Alle Regime – DA_only
-# REGS = ["NO","QUANT","FIT","FIT_PREMIUM","MPM","CFD"]
-# details_all_DA_only, totals_DA_only = run_all_da_only(REGS)
+# Minimalbeispiel
+# ---------------
+# from src.reduced_strategies_call import run_all_da_id
+# df = get_data()
+# regs = ["NO","QUANT","FIT","FIT_PREMIUM","MPM","MPM_EX","CFD"]
+# details_all_DA_ID, totals_DA_ID = run_all_da_id(regs, data=df)
 #
-# # Alle Regime – DA_ID (Intraday aktiv)
-# details_all_DA_ID, totals_DA_ID = run_all_da_id(REGS)
-#
-# # Ergebnisse als CSV sichern (in ./results)
-# from pathlib import Path
-# save_results_csv(
-#     outdir=Path("results"),
-#     details_all_DA_only=details_all_DA_only,
-#     details_all_DA_ID=details_all_DA_ID,
-#     totals_DA_only=totals_DA_only,
-#     totals_DA_ID=totals_DA_ID
-# )
+# Typische Stolpersteine
+# ----------------------
+# - Fehlende ID-Spalten bei `use_da_id=True` → Core erwartet BEIDE Spalten.
+# - Zeiträume START_DATE/END_DATE kommen aus `config.py`; ggf. vorher setzen.
+# - Wenn du externe Estimator-Spalten für MPM liefern willst (z. B. "__MV_EST__"),
+#   bitte im DataFrame anlegen und in `_regime_extras()` referenzieren.
 # =============================================================================
 
 from __future__ import annotations

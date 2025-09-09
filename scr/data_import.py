@@ -103,7 +103,7 @@ def build_data_from_sources(
     *,
     rebap_csv: Path,
     id1_xlsx: Path,
-    years: Iterable[int] = (2021, 2022, 2023, 2024, 2025),
+    years: Iterable[int] = (2022, 2023, 2024, 2025),
 ) -> pd.DataFrame:
     """
     Baut den finalen DataFrame (Index=DateTime) aus ENTSO-E (DB) + reBAP (CSV) + ID1 (XLSX).
