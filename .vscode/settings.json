@@ -1,10 +1,10 @@
 {
-  "python.analysis.extraPaths": [
-    "./"        // <-- Projekt-Root auf sys.path setzen
-  ],
   "jupyter.notebookFileRoot": "${workspaceFolder}",
   "jupyter.runStartupCommands": [
     "%cd ${workspaceFolder}"
+  ],
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/src"
   ],
   "python.envFile": "${workspaceFolder}/.env"
 }

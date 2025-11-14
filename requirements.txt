@@ -6,3 +6,5 @@ pymysql>=1.1
 openpyxl>=3.1
 matplotlib>=3.8
 seaborn>=0.12
+cryptography>=42.0
+

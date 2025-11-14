@@ -5,7 +5,7 @@
 # Zweck
 # -----
 # Simuliert das Dispatch- & Trading-Verhalten einer Anlage unter verschiedenen
-# Förderregimes (NO, QUANT, FIT, FIT_PREMIUM, MPM, MPM_EX, CFD) auf QH-Basis.
+# Förderregimes (NO, QUANT, FIT, FIT_PREMIUM, MPM, MPM_EX, CFD, CFD_MONTH_EST, CFD_CAPABILITY, CFD_FINANCIAL, CFD_YEAR_EST, CFD_YEAR_PREV) auf QH-Basis.
 #
 # Design-Entscheidungen
 # ---------------------
@@ -68,16 +68,22 @@ def reduced_strategies(
     id_price_col:    str | None = None,               # €/MWh (QH); None => DA-only
 
     # --- Regime & Parameter ---------------------------------------------------
-    regime: str = "NO",                               # "NO" | "QUANT" | "FIT" | "FIT_PREMIUM" | "MPM" | "MPM_EX" | "CFD"
-    p_fit: float = 60.0,                              # €/MWh (FIT & FIT_PREMIUM)
-    cfd_strike: float = 60.0,                         # €/MWh (CFD-Strike K)
+    regime: str = "NO",                               # "NO" | "QUANT" | "FIT" | "FIT_PREMIUM" | "MPM" | "MPM_EX" | "CFD" | "CFD_MONTH_EST" | "CFD_CAPABILITY" | "CFD_FINANCIAL", CFD_YEAR_EST, CFD_YEAR_PREV
+    p_fit: float = 80.0,                              # €/MWh (FIT & FIT_PREMIUM)
+    cfd_strike: float = 80.0,                         # €/MWh (CFD-Strike K)
     da_present_as_diff: bool = False,                 # CFD: DA als Diff vs. Act darstellen
     cfd_collapse_to_strike: bool = False,             # CFD: DA_EUR = 0; CfD = K * Act
+    # --- Financial CfD (stündliche Pauschale & Referenzgenerator) ------------
+    financial_cfd_hourly_eur: float = 0.0,                 # konstante Zahlung Staat->Betreiber je Stunde (€)
+    reference_output_col: str = "asset_ref_Wind Onshore_act",  # QH-Output (MW) des Referenzgenerators
+
 
     # --- MPM (Marktprämie) ----------------------------------------------------
-    mpm_aw: float = 60.0,                             # anzulegender Wert A (€/MWh)
+    mpm_aw: float = 80.0,                             # anzulegender Wert A (€/MWh)
     market_value_col: str | None = "Wind Onshore_marketvalue",  # realer Monats-MV (für Auszahlung & Vormonats-Schätzer)
-    market_value_est_col: str | None = None,          # optionaler MV-Schätzer; wenn None => Vormonat von market_value_col
+    market_value_est_col: str | None = "Wind Onshore_marketvalue_est", # Fallback: Vormonat von market_value_col
+    market_value_year_est_col: str | None = "Wind Onshore_marketvalue_year_est",
+    market_value_year_prev_col: str | None = "Wind Onshore_marketvalue_year_prev",
 
     # --- Zeitraumfilter -------------------------------------------------------
     start_date=None,
@@ -139,6 +145,30 @@ def reduced_strategies(
         if (market_value_col is None) or (market_value_col not in df.columns):
             raise ValueError(
                 "MPM/MPM_EX erfordern 'market_value_col' mit realisierten Monats-Marktwerten (€/MWh)."
+            )
+        
+    # CFD_MONTH_EST: braucht einen Estimator im DF
+    if reg == "CFD_MONTH_EST":
+        if (market_value_est_col is None) or (market_value_est_col not in df.columns):
+            raise ValueError("CFD_MONTH_EST benötigt 'market_value_est_col' im DataFrame.")
+
+    # CFD_YEAR_EST braucht Jahres-Schätzer (laufendes Jahr, as-of-11)
+    if reg == "CFD_YEAR_EST":
+        col = market_value_year_est_col or "Wind Onshore_marketvalue_year_est"
+        if col not in df.columns:
+            raise KeyError(f"CFD_YEAR_EST benötigt Spalte '{col}' im DataFrame.")
+
+    # CFD_YEAR_PREV braucht Jahres-Marktwert des Vorjahres (auf laufendes Jahr gemappt)
+    if reg == "CFD_YEAR_PREV":
+        col = market_value_year_prev_col or "Wind Onshore_marketvalue_year_prev"
+        if col not in df.columns:
+            raise KeyError(f"CFD_YEAR_PREV benötigt Spalte '{col}' im DataFrame.")
+
+    # CFD_FINANCIAL: braucht Referenz-Output-Spalte im DF
+    if reg == "CFD_FINANCIAL":
+        if (reference_output_col is None) or (reference_output_col not in df.columns):
+            raise KeyError(
+                f"CFD_FINANCIAL benötigt Referenzspalte '{reference_output_col}' im DataFrame."
             )
 
     # ---------- FIT (klassisch): Kurzpfad -------------------------------------
@@ -202,6 +232,15 @@ def reduced_strategies(
     if use_id:
         cols += [forecast_id_col, id_price_col]
 
+    if reg == "CFD_MONTH_EST":
+        cols.append(market_value_est_col)
+    if reg == "CFD_YEAR_EST":
+        cols.append(market_value_year_est_col or "Wind Onshore_marketvalue_year_est")
+    if reg == "CFD_YEAR_PREV":
+        cols.append(market_value_year_prev_col or "Wind Onshore_marketvalue_year_prev")
+    if reg == "CFD_FINANCIAL":
+        cols.append(reference_output_col or "asset_ref_Wind Onshore_act")
+
     need_mpm = (reg in {"MPM", "MPM_EX"})
     if need_mpm:
         if (market_value_est_col is not None) and (market_value_est_col in df.columns):
@@ -235,7 +274,13 @@ def reduced_strategies(
 
         # Estimator: explizite Spalte oder Vormonat
         if (market_value_est_col is not None) and (market_value_est_col in df.columns):
-            mv_est = df.loc[use.index, market_value_est_col].to_numpy(dtype=float)
+            s_est = df[market_value_est_col].reindex(use.index)
+            # Prüfen, ob durch Reindex NaNs entstanden sind
+            if s_est.isna().any():
+                print(
+                    f"[WARNUNG] {market_value_est_col} enthält nach Reindex {s_est.isna().sum()} fehlende Werte ")
+
+            mv_est = s_est.to_numpy(dtype=float)
         else:
             mv_est = mv_monthly.reindex(months - 1).to_numpy(dtype=float)
 
@@ -252,24 +297,73 @@ def reduced_strategies(
 
     # ---------- Entscheidungslogik --------------------------------------------
     # DA-Entscheidung (stündlich, aber auf QH gespiegelt)
-    if reg in {"NO", "QUANT"}:
+    if reg in {"NO", "QUANT", "CFD_FINANCIAL"}:
         da_trade_mask = use["p_DA_€/MWh"] > 0.0
+
     elif reg == "FIT_PREMIUM":
         da_trade_mask = (use["p_DA_€/MWh"] + float(p_fit)) > 0.0
+
     elif reg in {"MPM", "MPM_EX"}:
         # prem_est hat QH-Auflösung (über Months auf QH gemappt)
         da_trade_mask = (use["p_DA_€/MWh"].to_numpy() + prem_est) > 0.0
+
     elif reg == "CFD":
         da_trade_mask = np.ones(len(use), dtype=bool)  # immer DA
+
+    elif reg == "CFD_MONTH_EST":
+        # Marktwert-Schätzer (=Referenzpreis) für Entscheidung
+        s_mv = df[market_value_est_col].reindex(use.index)
+        if s_mv.isna().any():
+            print(f"[WARNUNG] {market_value_est_col} enthält {s_mv.isna().sum()} NaN-Werte nach Reindex.")
+        mv_est = s_mv.to_numpy(dtype=float)
+
+        # CfD bei neg. DA-Preis = 0 -> nur anbieten, wenn p_da + prem_est > 0
+        p_da = use["p_DA_€/MWh"].to_numpy()
+        prem_est = float(cfd_strike) - mv_est
+        prem_est[p_da < 0.0] = 0.0                  # keine Prämie bei neg. DA-Preis
+        da_trade_mask = (p_da + prem_est) > 0.0
+    
+    elif reg == "CFD_CAPABILITY":
+        # Capability-CfD: CfD-Abrechnung hängt an der DA-Capability (Forecast),
+        # nicht an der realen Einspeisung. Marginale Produktionsentscheidung = Spotpreis.
+        # Daher: DA nur, wenn p_DA > 0 (neg. Preise vermeiden).
+        da_trade_mask = use["p_DA_€/MWh"] > 0.0
+
+    elif reg == "CFD_YEAR_EST":
+        # Referenzpreis = Jahres-MV-Schätzer (laufendes Jahr, as-of-11)
+        col = market_value_year_est_col or "Wind Onshore_marketvalue_year_est"
+        s_mv = df[col].reindex(use.index)
+        if s_mv.isna().any():
+            print(f"[WARNUNG] {col} enthält {s_mv.isna().sum()} NaN-Werte nach Reindex.")
+        mv_ref = s_mv.to_numpy(dtype=float)
+
+        p_da = use["p_DA_€/MWh"].to_numpy()
+        prem_est = float(cfd_strike) - mv_ref
+        prem_est[p_da < 0.0] = 0.0              # keine Prämie bei neg. DA-Preis
+        da_trade_mask = (p_da + prem_est) > 0.0
+
+    elif reg == "CFD_YEAR_PREV":
+        # Referenzpreis = Jahres-Marktwert Vorjahr (auf laufendes Jahr gemappt)
+        col = market_value_year_prev_col or "Wind Onshore_marketvalue_year_prev"
+        s_mv = df[col].reindex(use.index)
+        if s_mv.isna().any():
+            print(f"[WARNUNG] {col} enthält {s_mv.isna().sum()} NaN-Werte nach Reindex.")
+        mv_ref = s_mv.to_numpy(dtype=float)
+
+        p_da = use["p_DA_€/MWh"].to_numpy()
+        prem_est = float(cfd_strike) - mv_ref
+        prem_est[p_da < 0.0] = 0.0
+        da_trade_mask = (p_da + prem_est) > 0.0
+   
     else:
-        raise ValueError('regime must be one of {"NO","QUANT","FIT","FIT_PREMIUM","MPM","MPM_EX","CFD"}.')
+        raise ValueError('regime must be one of {"NO","QUANT","FIT","FIT_PREMIUM","MPM","MPM_EX","CFD","CFD_MONTH_EST","CFD_CAPABILITY", "CFD_FINANCIAL", "CFD_YEAR_EST", "CFD_YEAR_PREV"}.')
 
     # gehandelte DA-Menge (QH-spiegel)
     use["DA_traded_MW"] = np.where(da_trade_mask, use["DA_MW"].to_numpy(), 0.0)
 
     # ID-Handel inkl. Buyback-Regeln
     if use_id:
-        if reg in {"NO", "QUANT"}:
+        if reg in {"NO", "QUANT", "CFD_FINANCIAL"}:
             id_trade_std = np.where(
                 use["DA_traded_MW"] > 0.0,
                 use[forecast_id_col].to_numpy() - use["DA_traded_MW"].to_numpy(),
@@ -301,6 +395,57 @@ def reduced_strategies(
                 0.0
             )
             buyback_mask = (use["p_ID_€/MWh"] < (use["p_DA_€/MWh"] - float(cfd_strike))) & (use["DA_traded_MW"] > 0.0)
+        
+        elif reg == "CFD_MONTH_EST":
+            # Standard-ID-Entscheidung:
+            # - Wenn schon DA gehandelt wurde → auf Forecast-ID nachsteuern
+            # - Wenn kein DA, dann nur ID, wenn p_ID + (K - MV_est) > 0
+            id_trade_std = np.where(
+                use["DA_traded_MW"] > 0.0,
+                use[forecast_id_col].to_numpy() - use["DA_traded_MW"].to_numpy(),
+                np.where((use["p_ID_€/MWh"].to_numpy() + (float(cfd_strike) - mv_est)) > 0.0,
+                         use[forecast_id_col].to_numpy(),
+                         0.0)
+            )
+            # Buyback-Regel: wenn p_ID < (MV_est - K), dann komplette DA-Menge zurückkaufen
+            buyback_mask = (use["p_ID_€/MWh"].to_numpy() < -(float(cfd_strike) - mv_est)) & \
+                   (use["DA_traded_MW"].to_numpy() > 0.0)
+            
+        elif reg == "CFD_CAPABILITY":
+            id_trade_std = np.where(
+                use["DA_traded_MW"] > 0.0,
+                use[forecast_id_col].to_numpy() - use["DA_traded_MW"].to_numpy(),
+                np.where(use["p_ID_€/MWh"] > 0.0, use[forecast_id_col].to_numpy(), 0.0)
+            )
+            buyback_mask = (use["p_ID_€/MWh"] < 0.0) & (use["DA_traded_MW"] > 0.0)
+
+        elif reg == "CFD_YEAR_EST":
+        # wie SMART_CFD, aber mit Jahres-Referenz
+            col = market_value_year_est_col or "Wind Onshore_marketvalue_year_est"
+            mv_ref = df[col].reindex(use.index).to_numpy(dtype=float)
+            id_trade_std = np.where(
+                use["DA_traded_MW"] > 0.0,
+                use[forecast_id_col].to_numpy() - use["DA_traded_MW"].to_numpy(),
+                np.where((use["p_ID_€/MWh"].to_numpy() + (float(cfd_strike) - mv_ref)) > 0.0,
+                        use[forecast_id_col].to_numpy(),
+                        0.0)
+            )
+            buyback_mask = (use["p_ID_€/MWh"].to_numpy() < -(float(cfd_strike) - mv_ref)) & \
+                        (use["DA_traded_MW"].to_numpy() > 0.0)
+
+        elif reg == "CFD_YEAR_PREV":
+            col = market_value_year_prev_col or "Wind Onshore_marketvalue_year_prev"
+            mv_ref = df[col].reindex(use.index).to_numpy(dtype=float)
+            id_trade_std = np.where(
+                use["DA_traded_MW"] > 0.0,
+                use[forecast_id_col].to_numpy() - use["DA_traded_MW"].to_numpy(),
+                np.where((use["p_ID_€/MWh"].to_numpy() + (float(cfd_strike) - mv_ref)) > 0.0,
+                        use[forecast_id_col].to_numpy(),
+                        0.0)
+            )
+            buyback_mask = (use["p_ID_€/MWh"].to_numpy() < -(float(cfd_strike) - mv_ref)) & \
+                        (use["DA_traded_MW"].to_numpy() > 0.0)
+
         else:
             raise ValueError("Unknown regime in ID handling.")
 
@@ -358,6 +503,50 @@ def reduced_strategies(
         else:
             # Standard: CfD = (K - p_DA) * Act
             cfd_eur = (float(cfd_strike) - use["p_DA_€/MWh"].to_numpy()) * act_eff * Δ
+
+    if reg == "CFD_MONTH_EST":
+        # CfD-Zahlung basiert auf MV-Schätzer, nicht auf p_DA. Keine Zahlung bei neg. DA-Preis.
+        p_da = use["p_DA_€/MWh"].to_numpy()
+        cfd_eur = (float(cfd_strike) - mv_est) * act_eff * Δ
+        cfd_eur[p_da < 0.0] = 0.0
+
+    if reg == "CFD_CAPABILITY":
+    # CfD nur anhand der Capability (DA-Mittelwert) – unabhängig von Act.
+    # Qcap_QH = DA_MW (pro Viertelstunde konstant innerhalb der Stunde)
+        p_da = use["p_DA_€/MWh"].to_numpy()
+        qcap_qh = use["DA_MW"].to_numpy()  # stündl. Mittel (auf QH gespiegelt)
+        cfd_eur = (float(cfd_strike) - p_da) * qcap_qh * Δ
+
+    if reg == "CFD_YEAR_EST":
+        p_da = use["p_DA_€/MWh"].to_numpy()
+        col = market_value_year_est_col or "Wind Onshore_marketvalue_year_est"
+        mv_ref = df[col].reindex(use.index).to_numpy(dtype=float)
+        cfd_eur = (float(cfd_strike) - mv_ref) * act_eff * Δ
+        cfd_eur[p_da < 0.0] = 0.0
+
+    if reg == "CFD_YEAR_PREV":
+        p_da = use["p_DA_€/MWh"].to_numpy()
+        col = market_value_year_prev_col or "Wind Onshore_marketvalue_year_prev"
+        mv_ref = df[col].reindex(use.index).to_numpy(dtype=float)
+        cfd_eur = (float(cfd_strike) - mv_ref) * act_eff * Δ
+        cfd_eur[p_da < 0.0] = 0.0
+    
+
+    if reg == "CFD_FINANCIAL":
+    # Staat -> Betreiber: stündliche Pauschale in €/h, auf 4 QHs verteilt (Zeit-basierter Betrag, nicht energiebasiert)
+        cap_asset = 35 # MW (angenommen, für Skalierung des Referenzgenerators)
+        flat_qh = float(financial_cfd_hourly_eur) * cap_asset / 4.0  # € pro QH
+        use[reference_output_col] = df.loc[use.index, reference_output_col].astype(float)
+
+        # Betreiber -> Staat: Profit des Referenzgenerators, aber min(., 0) gekappt
+        # Definition laut Vorgabe: Profit_hour = p_DA_hour * Output_ref_hour(MWh), negatives = 0
+        # QH-Umsetzung: p_DA (stündlich) * ref_output_qh(MW) * Δ, Summation über 4 QH == Stundenprofit
+        p_da = use["p_DA_€/MWh"].to_numpy()
+        ref_qh_mw = use[reference_output_col].astype(float).to_numpy()
+        ref_profit_qh_eur = np.maximum(p_da * ref_qh_mw * Δ, 0.0)  # €/QH, negatives auf 0
+
+        # Netto-CfD (positiv = Zufluss an Betreiber, negativ = Zahlung des Betreibers)
+        cfd_eur = flat_qh - ref_profit_qh_eur
 
     # ---------- Output-Tabellen ------------------------------------------------
     out = pd.DataFrame(index=use.index)
